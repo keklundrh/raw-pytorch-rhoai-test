@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: List
+items:
+  # One temporary upload pod per model PVC. Run all three at once (they mount
+  # different volumes, so no Multi-Attach conflict), copy each model dir, then
+  # delete ALL of them before deploying any InferenceService — each pod holds
+  # its PVC's single RWO attachment.
+  - apiVersion: v1
+    kind: Pod
+    metadata:
+      name: pathology-model-upload-conch
+    spec:
+      securityContext:
+        fsGroup: 1001
+      restartPolicy: Never
+      containers:
+        - name: upload
+          image: REPLACE_WITH_RUNTIME_IMAGE
+          command: ["sleep", "3600"]
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: "1", memory: 256Mi}
+          volumeMounts:
+            - name: models
+              mountPath: /models
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: pathology-models-conch
+  - apiVersion: v1
+    kind: Pod
+    metadata:
+      name: pathology-model-upload-titan
+    spec:
+      securityContext:
+        fsGroup: 1001
+      restartPolicy: Never
+      containers:
+        - name: upload
+          image: REPLACE_WITH_RUNTIME_IMAGE
+          command: ["sleep", "3600"]
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: "1", memory: 256Mi}
+          volumeMounts:
+            - name: models
+              mountPath: /models
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: pathology-models-titan
+  - apiVersion: v1
+    kind: Pod
+    metadata:
+      name: pathology-model-upload-virchow2
+    spec:
+      securityContext:
+        fsGroup: 1001
+      restartPolicy: Never
+      containers:
+        - name: upload
+          image: REPLACE_WITH_RUNTIME_IMAGE
+          command: ["sleep", "3600"]
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: "1", memory: 256Mi}
+          volumeMounts:
+            - name: models
+              mountPath: /models
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: pathology-models-virchow2

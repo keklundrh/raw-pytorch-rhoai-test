@@ -1,0 +1,54 @@
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: pathology-runtime
+  labels:
+    opendatahub.io/dashboard: "true"
+  annotations:
+    openshift.io/display-name: Pathology Runtime (CONCH / TITAN / Virchow2)
+spec:
+  multiModel: false
+  protocolVersions: [v1]
+  supportedModelFormats:
+    - name: conch-pytorch
+      version: "1"
+      autoSelect: false
+    - name: titan-pytorch
+      version: "1"
+      autoSelect: false
+    - name: virchow2-pytorch
+      version: "1"
+      autoSelect: false
+  containers:
+    - name: kserve-container
+      image: REPLACE_WITH_RUNTIME_IMAGE
+      imagePullPolicy: Always
+      ports:
+        - containerPort: 8080
+          protocol: TCP
+      env:
+        # Each deployment sets MODEL_NAME to the model this pod serves.
+        - name: MODEL_NAME
+          value: conch
+        - name: WEIGHTS_DIR
+          value: /mnt/models
+      securityContext:
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+        seccompProfile:
+          type: RuntimeDefault
+      startupProbe:
+        httpGet: {path: /health/ready, port: 8080}
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 90
+      readinessProbe:
+        httpGet: {path: /health/ready, port: 8080}
+        periodSeconds: 10
+        timeoutSeconds: 3
+      livenessProbe:
+        httpGet: {path: /health/live, port: 8080}
+        periodSeconds: 30
+        timeoutSeconds: 3

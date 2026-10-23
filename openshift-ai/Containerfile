@@ -1,0 +1,17 @@
+FROM registry.access.redhat.com/ubi9/python-311:latest
+USER 0
+RUN dnf install -y git tar && dnf clean all
+WORKDIR /opt/app-root/src
+COPY requirements-server.txt requirements-container.txt /tmp/requirements/
+# CPU-only Linux wheels. No GPU resource or CUDA runtime is needed for this baseline.
+RUN python -m pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu \
+    && python -m pip install --no-cache-dir -r /tmp/requirements/requirements-container.txt
+COPY model.py ./model.py
+COPY server.py ./server.py
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 HF_HOME=/tmp/hf \
+    WEIGHTS_DIR=/mnt/models TORCH_NUM_THREADS=2 MODEL_NAME=conch \
+    HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+RUN chmod -R a+rX /opt/app-root/src
+USER 1001
+EXPOSE 8080
+CMD ["python", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1", "--limit-concurrency", "16", "--no-access-log"]

@@ -2,8 +2,10 @@
 .venv
 .env 
 *.swp
+*~
 
 # Ignore dynamic folders
 rendered
 models 
 conch-serving-starter
+__pycache__

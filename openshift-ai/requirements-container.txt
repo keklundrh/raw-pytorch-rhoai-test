@@ -1,0 +1,11 @@
+# Bootstrap constraints, NOT a production lockfile.
+# Pin the CONCH commit, TITAN transformers version, and all Linux dependencies
+# after successful validation.
+transformers>=4.46,<5
+huggingface_hub<1
+timm>=1.0.3,<2
+einops>=0.6.1
+h5py>=3
+scikit-image
+git+https://github.com/mahmoodlab/CONCH.git
+-r requirements-server.txt

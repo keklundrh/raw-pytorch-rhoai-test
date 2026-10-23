@@ -1,0 +1,33 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: titan
+  labels:
+    opendatahub.io/dashboard: "true"
+  annotations:
+    openshift.io/display-name: TITAN
+    serving.kserve.io/deploymentMode: RawDeployment
+    serving.kserve.io/enable-prometheus-scraping: "false"
+    security.opendatahub.io/enable-auth: "false"
+    serving.kserve.io/visibility: cluster-local
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 1
+    model:
+      runtime: pathology-runtime
+      modelFormat:
+        name: titan-pytorch
+        version: "1"
+      protocolVersion: v1
+      storageUri: pvc://pathology-models-titan/
+      resources:
+        requests:
+          cpu: "2"
+          memory: 4Gi
+        limits:
+          cpu: "2"
+          memory: 8Gi
+      env:
+        - name: MODEL_NAME
+          value: titan
