@@ -4,7 +4,11 @@ One custom ServingRuntime image serves all three models. Each model runs as its
 own InferenceService pod from the same image, selected by `MODEL_NAME`, with the
 shared weights on one PVC. This is a starting deployment, not a certified or
 production-validated runtime. Changes are expected before production, to provide
-GPU capabilities or facilitate deployments, likfe ModelCars or ONNX conversion. 
+GPU capabilities or facilitate deployments, like ModelCars or ONNX conversion. 
+
+Another option: custom workbench image allowing users to load model and use similarly
+to local notebooks and workflow. The down side is potentially multiple identical
+models running within the environment.
 
 ## Why a custom ServingRuntime
 

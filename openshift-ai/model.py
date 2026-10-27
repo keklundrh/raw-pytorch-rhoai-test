@@ -46,6 +46,24 @@ class ConchModel:
             raise RuntimeError("CONCH returned non-finite values")
         return embedding[0].tolist()
 
+    def _tokenizer(self):
+        if not hasattr(self, "_tok"):
+            from conch.open_clip_custom import get_tokenizer
+
+            self._tok = get_tokenizer()
+        return self._tok
+
+    def predict_text(self, texts):
+        """Text embeddings, L2-normalized (CONCH's encode_text contract)."""
+        from conch.open_clip_custom import tokenize
+
+        tokens = tokenize(texts=list(texts), tokenizer=self._tokenizer())
+        with self.torch.inference_mode():
+            embs = self.model.encode_text(tokens)
+        if not self.torch.isfinite(embs).all():
+            raise RuntimeError("CONCH returned non-finite text values")
+        return embs.tolist()
+
 
 class TitanModel:
     """TITAN slide embedding from pre-extracted CONCHv1.5 patch features (HDF5)."""

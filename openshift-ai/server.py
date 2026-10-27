@@ -83,6 +83,35 @@ def create_app(loader=None):
             raise HTTPException(400, 'Expected one instances item with image.b64')
         return await run_in_threadpool(infer, encoded)
 
+    @app.post("/v1/models/{model_name}:text")
+    async def text(model_name: str, request: Request):
+        """CONCH text embeddings: {"texts": ["...", "..."]} -> {"embeddings": [[...], ...]}."""
+        if not app.state.ready:
+            raise HTTPException(503, "Model not ready")
+        model = app.state.model
+        if not hasattr(model, "predict_text"):
+            raise HTTPException(404, f"{model_name} has no text encoder")
+        body = await request.body()
+        try:
+            texts = json.loads(body)["texts"]
+            if not isinstance(texts, list) or not texts or not all(isinstance(t, str) and t for t in texts):
+                raise ValueError()
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+            raise HTTPException(400, 'Expected {"texts": ["...", ...]} with non-empty strings')
+        return await run_in_threadpool(infer_text, texts)
+
+    def infer_text(texts):
+        if not gate.acquire(blocking=False):
+            raise HTTPException(429, "Model busy; retry later")
+        try:
+            try:
+                return {"embeddings": app.state.model.predict_text(texts)}
+            except Exception:
+                logging.exception("Model text inference failed")
+                raise HTTPException(400, "Text inference failed")
+        finally:
+            gate.release()
+
     return app
 
 
