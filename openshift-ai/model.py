@@ -9,6 +9,26 @@ from PIL import Image
 from pathlib import Path
 import os
 
+
+
+def resolve_device(torch):
+    """Device from the DEVICE env var, defaulting to cpu.
+
+    Fails fast when DEVICE=cuda but no usable GPU is present (e.g. the CPU
+    image, or a pod without an nvidia.com/gpu resource) instead of silently
+    falling back or crashing deep in a matmul.
+    """
+    device = os.getenv("DEVICE", "cpu").strip().lower()
+    if device == "cpu":
+        return torch.device("cpu")
+    if device == "cuda" and torch.cuda.is_available():
+        return torch.device("cuda")
+    raise SystemExit(
+        f"DEVICE={device!r} but torch.cuda.is_available() is False; "
+        "use the GPU image and request nvidia.com/gpu on the pod"
+    )
+
+
 MODELS = ("conch", "titan", "virchow2")
 
 
@@ -26,18 +46,19 @@ class ConchModel:
         if not checkpoint.is_file():
             raise FileNotFoundError(f"Model checkpoint not found: {checkpoint}")
         self.torch = torch
+        self.device = resolve_device(torch)
         torch.set_num_threads(int(os.getenv("TORCH_NUM_THREADS", "2")))
         self.model, self.preprocess = create_model_from_pretrained(
             "conch_ViT-B-16", str(checkpoint)
         )
-        self.model = self.model.to("cpu").eval()
+        self.model = self.model.to(self.device).eval()
 
     @staticmethod
     def warmup_payload():
         return Image.new("RGB", (448, 448))
 
     def predict(self, image):
-        tensor = self.preprocess(image.convert("RGB")).unsqueeze(0).to("cpu")
+        tensor = self.preprocess(image.convert("RGB")).unsqueeze(0).to(self.device)
         with self.torch.inference_mode():
             embedding = self.model.encode_image(
                 tensor, proj_contrast=False, normalize=False
@@ -58,6 +79,7 @@ class ConchModel:
         from conch.open_clip_custom import tokenize
 
         tokens = tokenize(texts=list(texts), tokenizer=self._tokenizer())
+        tokens = tokens.to(self.device)
         with self.torch.inference_mode():
             embs = self.model.encode_text(tokens)
         if not self.torch.isfinite(embs).all():
@@ -95,12 +117,13 @@ class TitanModel:
         if not (repo / "config.json").is_file():
             raise FileNotFoundError(f"TITAN snapshot not found: {repo}")
         self.torch = torch
+        self.device = resolve_device(torch)
         torch.set_num_threads(int(os.getenv("TORCH_NUM_THREADS", "2")))
         self._patch_dynamic_module_cache(repo)
         self.model = AutoModel.from_pretrained(
             str(repo), trust_remote_code=True, local_files_only=True
         )
-        self.model = self.model.to("cpu").eval()
+        self.model = self.model.to(self.device).eval()
 
     @staticmethod
     def warmup_payload():
@@ -110,8 +133,8 @@ class TitanModel:
         import h5py
 
         with h5py.File(io.BytesIO(h5_bytes), "r") as handle:
-            features = self.torch.from_numpy(handle["features"][:])
-            coords = self.torch.from_numpy(handle["coords"][:])
+            features = self.torch.from_numpy(handle["features"][:]).to(self.device)
+            coords = self.torch.from_numpy(handle["coords"][:]).to(self.device)
             patch_size_lv0 = int(handle["coords"].attrs["patch_size_level0"])
         if features.ndim != 3 or features.shape[0] != 1:
             raise ValueError(f"Expected features shaped (1, N, C), got {tuple(features.shape)}")
@@ -141,6 +164,7 @@ class Virchow2Model:
         if not (repo / "config.json").is_file():
             raise FileNotFoundError(f"Virchow2 snapshot not found: {repo}")
         self.torch = torch
+        self.device = resolve_device(torch)
         torch.set_num_threads(int(os.getenv("TORCH_NUM_THREADS", "2")))
         # timm requires an explicit source prefix for a local snapshot directory.
         self.model = timm.create_model(
@@ -149,7 +173,7 @@ class Virchow2Model:
             mlp_layer=SwiGLUPacked,
             act_layer=torch.nn.SiLU,
         )
-        self.model = self.model.to("cpu").eval()
+        self.model = self.model.to(self.device).eval()
         from timm.data import resolve_data_config
         from timm.data.transforms_factory import create_transform
 
@@ -162,7 +186,7 @@ class Virchow2Model:
         return Image.new("RGB", (224, 224))
 
     def predict(self, image):
-        tensor = self.preprocess(image.convert("RGB")).unsqueeze(0).to("cpu")
+        tensor = self.preprocess(image.convert("RGB")).unsqueeze(0).to(self.device)
         with self.torch.inference_mode():
             output = self.model(tensor)
         class_token = output[:, 0]

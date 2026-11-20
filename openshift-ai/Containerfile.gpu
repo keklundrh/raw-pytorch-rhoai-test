@@ -1,10 +1,15 @@
+# GPU runtime image: identical Python code to Containerfile.cpu; only the
+# PyTorch wheels differ. Used by the pathology-runtime-gpu BuildConfig.
+# cu121 wheels need an NVIDIA driver >= 525 on the GPU nodes (GPU Operator
+# provides the driver; only the userspace runtime comes from the wheels).
+# For driver >= 550 switch both index URLs to .../whl/cu124; for the newest
+# drivers, install plain "torch torchvision" from PyPI instead.
 FROM registry.access.redhat.com/ubi9/python-311:latest
 USER 0
 RUN dnf install -y git tar && dnf clean all
 WORKDIR /opt/app-root/src
 COPY requirements-server.txt requirements-container.txt /tmp/requirements/
-# CPU-only Linux wheels. No GPU resource or CUDA runtime is needed for this baseline.
-RUN python -m pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu \
+RUN python -m pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu121 \
     && python -m pip install --no-cache-dir -r /tmp/requirements/requirements-container.txt
 COPY model.py ./model.py
 COPY server.py ./server.py

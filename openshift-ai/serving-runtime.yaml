@@ -5,7 +5,7 @@ metadata:
   labels:
     opendatahub.io/dashboard: "true"
   annotations:
-    openshift.io/display-name: Pathology Runtime (CONCH / TITAN / Virchow2)
+    openshift.io/display-name: Pathology Runtime GPU (CONCH / TITAN / Virchow2)
 spec:
   multiModel: false
   protocolVersions: [v1]
@@ -27,9 +27,11 @@ spec:
         - containerPort: 8080
           protocol: TCP
       env:
-        # Each deployment sets MODEL_NAME to the model this pod serves.
-        - name: MODEL_NAME
-          value: conch
+        # Per-InferenceService env sets MODEL_NAME and DEVICE=cuda. If this
+        # runtime's image is swapped for the CPU build, model.py fails startup
+        # on DEVICE=cuda instead of silently running on CPU.
+        - name: DEVICE
+          value: cuda
         - name: WEIGHTS_DIR
           value: /mnt/models
       securityContext:

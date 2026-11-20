@@ -31,6 +31,8 @@ def create_app(loader=None):
     async def lifespan(app):
         # Fail startup if loading or a real warm-up inference fails.
         app.state.model = await run_in_threadpool(loader)
+        device = getattr(app.state.model, "device", None)
+        logging.info("%s loaded on device %s", model_name, device)
         await run_in_threadpool(
             app.state.model.predict, app.state.model.warmup_payload()
         )

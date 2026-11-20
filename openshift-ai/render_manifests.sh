@@ -21,13 +21,18 @@ if ! printf '%s' "$namespace" | grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'; then
 fi
 
 image="image-registry.openshift-image-registry.svc:5000/${namespace}/pathology-runtime:latest"
+image_cpu="image-registry.openshift-image-registry.svc:5000/${namespace}/pathology-runtime-cpu:latest"
 
 mkdir -p "$root/rendered"
 for name in model-storage.yaml model-upload-pod.yaml serving-runtime.yaml \
+            serving-runtime-cpu.yaml \
             inference-service-conch.yaml inference-service-titan.yaml \
             inference-service-virchow2.yaml; do
-    sed "s|REPLACE_WITH_RUNTIME_IMAGE|$image|g" \
+    sed -e "s|REPLACE_WITH_RUNTIME_IMAGE_CPU|$image_cpu|g" \
+        -e "s|REPLACE_WITH_RUNTIME_IMAGE|$image|g" \
         "$root/openshift-ai/$name" > "$root/rendered/$name"
 done
 
-echo "Rendered manifests for namespace $namespace using $image"
+echo "Rendered manifests for namespace $namespace"
+echo "  GPU image: $image"
+echo "  CPU image: $image_cpu"

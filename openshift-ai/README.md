@@ -40,10 +40,37 @@ For TITAN the `b64` bytes are an HDF5 file containing `features` shaped
 `coords` (1024 if the slide is 40x, 512 if 20x). TITAN consumes pre-extracted
 patch features, not images; extract them with CONCHv1.5 (CLAM or TRIDENT).
 
-## A note on GPU support 
+## GPU support
 
-GPU support for models is possible but requires rebuilding custom serving runtime. 
+GPU support is implemented via the device env var, not a separate codebase:
 
+- `model.py` resolves the device from `DEVICE` (default `cpu`) and fails
+  startup when `DEVICE=cuda` but no GPU is usable — no silent fallback.
+- `Containerfile.cpu` and `Containerfile.gpu` differ only in the PyTorch
+  wheel index (`/whl/cpu` vs `/whl/cu121`); the Python code is identical in
+  both images. The cu121 wheels need an NVIDIA driver ≥ 525 on the GPU nodes;
+  switch to `/whl/cu124` for driver ≥ 550 (see the comment in
+  `Containerfile.gpu`).
+- Two ServingRuntimes select the image: `pathology-runtime` (GPU image,
+  default `DEVICE=cuda`) and `pathology-runtime-cpu` (CPU image, `DEVICE=cpu`).
+- The InferenceServices request `nvidia.com/gpu: 1` (requests == limits, as
+  Kubernetes requires for extended resources) and set `DEVICE=cuda`. To run a
+  model on CPU instead, point its `runtime` at `pathology-runtime-cpu` and
+  drop the GPU resource and the `DEVICE` override.
+- Requires the NVIDIA GPU Operator and NFD on the cluster (administrator
+  setup). The GPU image does not make a CPU-only pod use a GPU, and the CPU
+  image ignores an attached GPU.
+
+Build both images (same code, two wheel sets):
+
+```bash
+oc new-build --name=pathology-runtime --binary=true --strategy=docker \
+    --dockerfile=openshift-ai/Containerfile.gpu
+oc new-build --name=pathology-runtime-cpu --binary=true --strategy=docker \
+    --dockerfile=openshift-ai/Containerfile.cpu
+oc start-build pathology-runtime --from-dir=openshift-ai --follow
+oc start-build pathology-runtime-cpu --from-dir=openshift-ai --follow
+```
 
 ## Files in this folder
 
@@ -51,8 +78,10 @@ GPU support for models is possible but requires rebuilding custom serving runtim
 |---|---|
 | `model.py` | Three model wrappers: CONCH, TITAN, Virchow2 |
 | `server.py` | HTTP server; `MODEL_NAME` picks the model |
-| `Containerfile` | Runtime image definition (CPU-only) |
-| `serving-runtime.yaml` | One ServingRuntime template for all three models |
+| `Containerfile.cpu` | CPU runtime image definition (PyTorch CPU wheels) |
+| `Containerfile.gpu` | GPU runtime image definition (PyTorch cu121 wheels; same Python code) |
+| `serving-runtime.yaml` | ServingRuntime template for the GPU image (`pathology-runtime`) |
+| `serving-runtime-cpu.yaml` | ServingRuntime template for the CPU image (`pathology-runtime-cpu`) |
 | `inference-service-conch.yaml` | CONCH deployment |
 | `inference-service-titan.yaml` | TITAN deployment |
 | `inference-service-virchow2.yaml` | Virchow2 deployment |
@@ -99,6 +128,9 @@ MODEL_NAME=titan WEIGHTS_DIR="$PWD/models" python -m uvicorn server:app \
     --app-dir openshift-ai --host 127.0.0.1 --port 8082 --workers 1
 ```
 
+`DEVICE` defaults to `cpu`; set `DEVICE=cuda` only on a CUDA-capable machine
+with CUDA torch wheels (the local venv typically has CPU wheels).
+
 Wait for `Application startup complete`. In another terminal:
 
 ```bash
@@ -122,16 +154,26 @@ If a CRD is missing, ask your cluster administrator to enable the model serving
 platform. The build must reach Red Hat's registry, PyPI, GitHub, and PyTorch's
 wheel index. The running server does not download weights or need a token.
 
-## 4. Build the runtime image on OpenShift
+## 4. Build the runtime images on OpenShift
 
-The cluster builds for its own node architecture. The image contains Python,
-PyTorch CPU libraries, all three model wrappers, and the HTTP server — no
-weights, tokens, or sample images.
+The cluster builds for its own node architecture. Each image contains Python,
+PyTorch (CPU or CUDA wheels per image), all three model wrappers, and the HTTP
+server — no weights, tokens, or sample images. Build both (see "GPU support"
+above for the wheel/driver details):
 
 ```bash
-oc new-build --name=pathology-runtime --binary=true --strategy=docker
+oc new-build --name=pathology-runtime --binary=true --strategy=docker \
+    --dockerfile=openshift-ai/Containerfile.gpu
+oc new-build --name=pathology-runtime-cpu --binary=true --strategy=docker \
+    --dockerfile=openshift-ai/Containerfile.cpu
 oc start-build pathology-runtime --from-dir=openshift-ai --follow
+oc start-build pathology-runtime-cpu --from-dir=openshift-ai --follow
 ```
+
+`--from-dir=openshift-ai` sends the whole folder, so both containerfiles are
+available to both builds; `--dockerfile=` picks which one runs. If BuildConfigs
+named `pathology-runtime` / `pathology-runtime-cpu` already exist, skip
+`oc new-build`.
 
 Check the build actually succeeded — a `Failed` build leaves the previous image
 on `:latest` and every later step runs stale code with no error:
@@ -141,17 +183,14 @@ oc get builds -o custom-columns=NAME:.metadata.name,PHASE:.status.phase,COMPLETE
 # The newest pathology-runtime-N must be Complete; if Failed: oc logs build/pathology-runtime-N
 ```
 
-If a BuildConfig named `pathology-runtime` exists, skip `oc new-build`. Check
-quota if the builder is evicted.
-
 ### Re-deploying after a code change
 
 `oc apply` of the manifests does NOT roll pods or re-pull `:latest`: the
 ServingRuntime spec is unchanged, so no new pod is created and the old pod keeps
 the old image. The pod roll below is what deploys new code.
-`imagePullPolicy: Always` (set in `serving-runtime.yaml`) only guarantees a pod
-that IS being created re-pulls `:latest` from the registry instead of reusing
-the node's cache — it never triggers a rollout by itself.
+`imagePullPolicy: Always` (set in both `serving-runtime*.yaml`) only guarantees
+a pod that IS being created re-pulls `:latest` from the registry instead of
+reusing the node's cache — it never triggers a rollout by itself.
 
 ```bash
 oc delete pod -l serving.kserve.io/inferenceservice=conch
@@ -292,6 +331,8 @@ timeout.
 ```bash
 oc apply --dry-run=server -f rendered/serving-runtime.yaml
 oc apply -f rendered/serving-runtime.yaml
+oc apply --dry-run=server -f rendered/serving-runtime-cpu.yaml
+oc apply -f rendered/serving-runtime-cpu.yaml
 oc apply --dry-run=server -f rendered/inference-service-conch.yaml
 oc apply -f rendered/inference-service-conch.yaml
 oc apply --dry-run=server -f rendered/inference-service-titan.yaml
@@ -323,6 +364,10 @@ Common failures:
 - dependency/import failure: compare package versions against your working Mac
   environment. Linux dependencies are independently resolved.
 - `OOMKilled`: inspect actual memory use before raising the memory limit.
+- `DEVICE=cuda but torch.cuda.is_available() is False`: the pod runs the CPU
+  image without a GPU resource, or the GPU image on a pod with no
+  `nvidia.com/gpu` request, or a node driver/library mismatch. Check
+  `oc describe node <gpu-node>` for `nvidia.com/gpu` capacity.
 - admission error: use the exact server dry-run message to reconcile cluster
   policies.
 
@@ -344,8 +389,10 @@ oc port-forward pod/PREDICTOR_POD_NAME 8081:8080
 
 - One model per pod keeps only one model copy resident per deployment; the
   runtime never loads a second model in a serving process.
-- CPU baseline requests 2 CPUs / 4 GiB with an 8 GiB limit per pod. Virchow2
-  (ViT-Huge) is slow on CPU — seconds per tile. Measure before raising limits.
+- Baseline requests 2 CPUs / 4 GiB with an 8 GiB limit per pod, plus
+  `nvidia.com/gpu: 1` on the GPU deployments. Virchow2 (ViT-Huge) is slow on
+  CPU — seconds per tile; the GPU deployments exist for it. Measure before
+  raising limits.
 - TITAN warm-up runs a tiny synthetic feature grid; real slide embeddings scale
   with patch count N.
 - Each model has its own RWO PVC (~2 GiB data + overhead); model pods on
@@ -359,15 +406,10 @@ oc port-forward pod/PREDICTOR_POD_NAME 8081:8080
    first deployment; they are not reproducible production locks.
 2. Configure TLS and token authentication using the cluster's supported OpenShift
    AI ingress/auth setup before enabling external access.
-3. Measure latency, memory, and throughput with real payloads. This CPU-only
-   image does not become GPU-enabled by adding a GPU resource request.
-   GPU support IS possible as a future option: OpenShift AI 3.5's accelerator
-   support (NFD + NVIDIA/AMD GPU operator, hardware profiles) is
-   runtime-agnostic, so this ServingRuntime can request `nvidia.com/gpu` — but
-   the image must first be rebuilt with CUDA PyTorch wheels (the Containerfile
-   currently installs CPU-only wheels), and the wrappers' hardcoded
-   `.to("cpu")` calls need a device env var. Until then, the pod silently runs
-   on CPU even when a GPU is attached.
+3. Measure latency, memory, and throughput with real payloads, on CPU and GPU
+   pods. The device is selected by the `DEVICE` env var (GPU deployments set
+   `DEVICE=cuda`), and the GPU image must be rebuilt with the CUDA wheel index
+   matching the node driver (see "GPU support").
 4. Storage per model is already isolated (one RWO PVC each). Consider S3
    delivery or an RWX class before running multiple replicas of one model.
 5. Add request/error/latency metrics and alerts; the server has health probes

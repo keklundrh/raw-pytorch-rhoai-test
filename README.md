@@ -15,5 +15,5 @@ Models are custom raw PyTorch deployments which means they will not, by default,
 ## What's next 
 
 - Determine which ONNX port makes sense 
-- Add cuda support for model throughput performance 
+- ~~Add cuda support for model throughput performance~~ done — `DEVICE` env var plus `Containerfile.gpu` (cu121 wheels) and the `pathology-runtime` (GPU) / `pathology-runtime-cpu` ServingRuntimes; see [`openshift-ai/README.md`](./openshift-ai/README.md), "GPU support" 
 - Consider ModelCar pattern for easier deployment management
